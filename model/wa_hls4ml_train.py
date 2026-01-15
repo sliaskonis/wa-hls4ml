@@ -1,5 +1,6 @@
 import torch
 import sklearn
+import os
 
 import numpy as np
 
@@ -148,7 +149,7 @@ def val_step(dataloader, model, loss_fn, is_graph, dev):
     return test_loss
 
 
-def general_train(X_train, y_train, model, loss_function, is_graph, batch_size, test_size, epochs, name, folder, learning_rate, weight_decay, patience, cooldown, factor, min_lr, epsilon, dev):
+def general_train(X_train, y_train, model, loss_function, is_graph, batch_size, test_size, epochs, name, folder, learning_rate, weight_decay, patience, cooldown, factor, min_lr, epsilon, dev, X_val_in=None, y_val_in=None):
     ''' Function for performing the training routine given the input data, model, and parameters '''
 
     # create optimizer and scheduler based on input specifications
@@ -156,12 +157,19 @@ def general_train(X_train, y_train, model, loss_function, is_graph, batch_size, 
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(adam, patience=patience, cooldown=cooldown, factor=factor, min_lr=min_lr, eps=epsilon)
 
     # create a train and validation set
-    X_only_train, X_val, y_only_train, y_val = sklearn.model_selection.train_test_split(X_train, y_train, random_state=40, test_size=test_size)
+    if X_val_in is not None and y_val_in is not None:
+        X_only_train = X_train
+        y_only_train = y_train
+        X_val = X_val_in
+        y_val = y_val_in
+    else:
+        # otherwise split the provided training set
+        X_only_train, X_val, y_only_train, y_val = sklearn.model_selection.train_test_split(X_train, y_train, random_state=40, test_size=test_size)
 
     # set up data loading
     if is_graph:
-        train_X_dataloader = gloader.DataLoader(X_only_train, batch_size=batch_size)
-        train_y_dataloader = gloader.DataLoader(torch.tensor(y_only_train), batch_size=batch_size)
+        train_X_dataloader = gloader.DataLoader(X_only_train, batch_size=batch_size, shuffle=True)
+        train_y_dataloader = gloader.DataLoader(torch.tensor(y_only_train), batch_size=batch_size, shuffle=True)
         train_dataloader = (train_X_dataloader, train_y_dataloader)
 
         val_X_dataloader = gloader.DataLoader(X_val, batch_size=batch_size)
@@ -170,13 +178,15 @@ def general_train(X_train, y_train, model, loss_function, is_graph, batch_size, 
 
     else:
         train_dataset = torch.utils.data.TensorDataset(torch.tensor(X_only_train).to(dev), torch.tensor(y_only_train).to(dev))
-        train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size)
+        train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 
         val_dataset = torch.utils.data.TensorDataset(torch.tensor(X_val).to(dev), torch.tensor(y_val).to(dev))
         val_dataloader = torch.utils.data.DataLoader(val_dataset, batch_size=batch_size)
 
 
     directory = folder+'/'+name
+    if not os.path.exists(directory):
+        os.makedirs(directory)
 
     history = {'train':[], 'val':[], 'lr':[]}
 
@@ -202,12 +212,15 @@ def general_train(X_train, y_train, model, loss_function, is_graph, batch_size, 
             best_loss = test_loss
             best_model = copy.deepcopy(model)
 
-    model.eval()
+    if best_model is None:
+        best_model = model
+
+    best_model.eval()
 
     wa_hls4ml_data_plot.plot_loss(name, history, folder)
     save_model(best_model, directory)
 
-def train_classifier(X_train, y_train, folder_name, is_graph, dev = "cpu"):
+def train_classifier(X_train, y_train, folder_name, is_graph, dev = "cpu", X_val=None, y_val=None):
     ''' Train classification model '''
     
     name = 'classification'
@@ -232,9 +245,9 @@ def train_classifier(X_train, y_train, folder_name, is_graph, dev = "cpu"):
     min_lr = 0.00000001
     epsilon = 0.000001
 
-    general_train(X_train, y_train, model, loss_function, is_graph, batch, test_size, epochs, name, folder_name, learning_rate, weight_decay, patience, cooldown, factor, min_lr, epsilon, dev)
+    general_train(X_train, y_train, model, loss_function, is_graph, batch, test_size, epochs, name, folder_name, learning_rate, weight_decay, patience, cooldown, factor, min_lr, epsilon, dev, X_val_in=X_val, y_val_in=y_val)
     
-def train_regressor(X_train, y_train, output_features, folder_name, is_graph, dev = "cpu"):
+def train_regressor(X_train, y_train, output_features, folder_name, is_graph, dev = "cpu", X_val=None, y_val=None):
     ''' Train regression models for all features '''
 
     test_size = .125
@@ -267,6 +280,15 @@ def train_regressor(X_train, y_train, output_features, folder_name, is_graph, de
         print("Training " + feature + "...")
         y_train_feature = y_train[:, i]
 
+        if X_val is not None and y_val is not None:
+            # We also need to slice the validation Y to just the target feature
+             y_val_feature = y_val[:, i]
+             # For regression, we typically only want to validate on successful synthesis items if filtering was done
+             # But here X_val/y_val passed in should match X_train/y_train semantics (i.e. already filtered or not)
+             # The usage in main loop filters X_train to successes. We must assume caller filters X_val too.
+        else:
+            y_val_feature = None
+
         i += 1
 
         name = 'regression_'+feature
@@ -278,4 +300,4 @@ def train_regressor(X_train, y_train, output_features, folder_name, is_graph, de
 
         loss_function = LogCoshLoss()
 
-        general_train(X_train, y_train_feature, model, loss_function, is_graph, batch, test_size, epochs, name, folder_name, learning_rate, weight_decay, patience, cooldown, factor, min_lr, epsilon, dev)
+        general_train(X_train, y_train_feature, model, loss_function, is_graph, batch, test_size, epochs, name, folder_name, learning_rate, weight_decay, patience, cooldown, factor, min_lr, epsilon, dev, X_val_in=X_val, y_val_in=y_val_feature)

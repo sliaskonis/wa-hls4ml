@@ -17,30 +17,92 @@ from model.wa_hls4ml_test import calculate_metrics, display_results_classifier,d
 from data.wa_hls4ml_data_processing import preprocess_data
 
 
-def perform_train_and_test(train, test, regression, classification, skip_intermediates, is_graph, folder_name = "model_1", input_file = "../results/results_combined.csv", needs_json_parsing = False, doing_train_test_split = True, dev="cpu"):
+
+import os
+
+def perform_train_and_test(train, test, regression, classification, skip_intermediates, is_graph, folder_name = "model_1", input_file = "../results/results_combined.csv", needs_json_parsing = False, doing_train_test_split = True, dev="cpu", train_dir=None, test_dir=None, val_dir=None):
 
     features_without_classification = ["WorstLatency_hls", "IntervalMax_hls", "FF_hls", "LUT_hls", "BRAM_18K_hls", "DSP_hls"]
     feature_classification_task = ["hls_synth_success"]
 
-    if test and not train:
-        # in this case, we have stored files for the mean and stdev of all our numeric features
+    X_val = None
+    y_val = None
+
+    if train_dir and test_dir and val_dir:
+        # Separate directory mode
+        print("Using separate directories for Train/Val/Test")
+        doing_train_test_split = False # We handle splitting manually
+
+        # 1. Process Training Data
+        print("Processing Training Data...")
+        # Since we use preprocess_data, let's treat it as "train" set.
+        # It will calc and save mean/stdev
+        
+        # We need CSV filenames for them.
+        train_csv = "train_data.csv" # Intermediate CSV
+        val_csv = "val_data.csv"
+        test_csv = "test_data.csv"
+
+        # Preprocess TRAIN (calculates stats)
+        # Note: preprocess_data with doing_train_test_split=False returns X, X, y, y, ...
+        X_train, _, y_train, _, X_raw_train, _ = preprocess_data(
+            folder_name, is_graph, train_dir, output_csv=train_csv, 
+            needs_json_parsing=needs_json_parsing, 
+            doing_train_test_split=False, dev=dev
+        )
+
+        # Load calculated mean/stdev to use for Val/Test
         mean = np.load(folder_name + "/mean.npy")
         stdev = np.load(folder_name + "/stdev.npy")
-    else:
-        mean = None
-        stdev = None
 
-    # get raw data out
-    X_train, X_test, y_train, y_test, X_raw_train, X_raw_test = preprocess_data(folder_name, is_graph, input_file, needs_json_parsing = needs_json_parsing, mean=mean, stdev=stdev, doing_train_test_split = doing_train_test_split, dev = dev)
+        # Preprocess VAL
+        print("Processing Validation Data...")
+        X_val, _, y_val, _, _, _ = preprocess_data(
+            folder_name, is_graph, val_dir, output_csv=val_csv,
+            needs_json_parsing=needs_json_parsing,
+            doing_train_test_split=False, dev=dev,
+            mean=mean, stdev=stdev # Use training stats
+        )
+
+        # Preprocess TEST
+        print("Processing Test Data...")
+        X_test, _, y_test, _, X_raw_test, _ = preprocess_data(
+            folder_name, is_graph, test_dir, output_csv=test_csv,
+            needs_json_parsing=needs_json_parsing,
+            doing_train_test_split=False, dev=dev,
+            mean=mean, stdev=stdev # Use training stats
+        )
+        
+    else:
+        # Legacy/Single File Mode
+        if test and not train:
+            # in this case, we have stored files for the mean and stdev of all our numeric features
+            if os.path.exists(folder_name + "/mean.npy"):
+                mean = np.load(folder_name + "/mean.npy")
+                stdev = np.load(folder_name + "/stdev.npy")
+            else:
+                mean = None
+                stdev = None
+        else:
+            mean = None
+            stdev = None
+
+        # get raw data out
+        X_train, X_test, y_train, y_test, X_raw_train, X_raw_test = preprocess_data(folder_name, is_graph, input_file, needs_json_parsing = needs_json_parsing, mean=mean, stdev=stdev, doing_train_test_split = doing_train_test_split, dev = dev)
 
     # get just the classification task as its own variable
     y_train_classifier = y_train[:, -1]
     y_test_classifier = y_test[:, -1]
+    
+    if y_val is not None:
+         y_val_classifier = y_val[:, -1]
+    else:
+         y_val_classifier = None
 
     # train the classifier
     if train and classification:
         print("Training the classifier...")
-        train_classifier(X_train, y_train_classifier, folder_name, is_graph, dev)
+        train_classifier(X_train, y_train_classifier, folder_name, is_graph, dev, X_val=X_val, y_val=y_val_classifier)
     if test and classification and not skip_display_intermediate:
         display_results_classifier(X_test, X_raw_test, y_test_classifier, feature_classification_task, folder_name, is_graph)
 
@@ -64,6 +126,20 @@ def perform_train_and_test(train, test, regression, classification, skip_interme
         X_raw_succeeded_train = X_raw_train[succeeded_synth_gt_train]
     y_succeeded_train = (y_train[succeeded_synth_gt_train])[:, :-1]
 
+    # Handle Validation for Regression
+    X_succeeded_val = None
+    y_succeeded_val = None
+    if X_val is not None and y_val is not None:
+        succeeded_synth_gt_val = np.nonzero(y_val_classifier)
+        if is_graph:
+            X_succeeded_val = []
+            for i in succeeded_synth_gt_val[0]:
+                X_succeeded_val.append(X_val[i])
+        else:
+            X_succeeded_val = X_val[succeeded_synth_gt_val]
+        y_succeeded_val = (y_val[succeeded_synth_gt_val])[:, :-1]
+
+
     # only test regressor alone on successes
     if is_graph:
         X_succeeded_test = []
@@ -79,7 +155,7 @@ def perform_train_and_test(train, test, regression, classification, skip_interme
     # train the regressor
     if train and regression:
         print("Training the regressor...")
-        train_regressor(X_succeeded_train, y_succeeded_train, features_without_classification, folder_name, is_graph, dev)
+        train_regressor(X_succeeded_train, y_succeeded_train, features_without_classification, folder_name, is_graph, dev, X_val=X_succeeded_val, y_val=y_succeeded_val)
     if test and regression and not skip_intermediates:
         display_results_regressor(X_succeeded_test, X_raw_succeeded_test, y_succeeded_test, features_without_classification, folder_name, is_graph)
 
@@ -98,7 +174,7 @@ if __name__ == "__main__":
 
     parser.add_argument('--gpu', action='store_true', help='Use CUDA GPU processing for training')
     
-    parser.add_argument('--no-tts', action='store_true', help='Disable the automatic train-test split. Use only if using separate training and testing sets.', required=True)
+    parser.add_argument('--no-tts', action='store_true', help='Disable the automatic train-test split. Use only if using separate training and testing sets.')
 
     parser.add_argument('--json', action='store_true', help='Parse JSON file as the input. If not given, assume that the input is a pre-parsed CSV')
 
@@ -114,6 +190,9 @@ if __name__ == "__main__":
 
     parser.add_argument('-f', '--folder', action='store', help='Set the folder you want the model outputs to be created within', required=True)
 
+    parser.add_argument('--train-dir', action='store', help='Directory containing training JSON files')
+    parser.add_argument('--test-dir', action='store', help='Directory containing testing JSON files')
+    parser.add_argument('--val-dir', action='store', help='Directory containing validation JSON files')
     
     args = parser.parse_args()
     args_dict = vars(args)
@@ -126,10 +205,10 @@ if __name__ == "__main__":
         train = True
         test = True
 
-    no_tts = args_dict['no-tts']
+    no_tts = args_dict['no_tts']
 
-    if train and test and no_tts:
-        raise ValueError('Train and test cannot both be selected if the train-test split is disabled - one or the other flag must be set alone.')
+    # if train and test and no_tts:
+    #     raise ValueError('Train and test cannot both be selected if the train-test split is disabled - one or the other flag must be set alone.')
 
     classification = args_dict['classification']
     regression= args_dict['regression']
@@ -161,9 +240,18 @@ if __name__ == "__main__":
     else:
         dev = "cpu"
 
+    train_dir = args.train_dir
+    test_dir = args.test_dir
+    val_dir = args.val_dir
+
+    if train_dir and test_dir and val_dir:
+        # Implied separate datasets
+        needs_json_parsing = True # We are parsing directories of JSONs
+        no_tts = True # We handle splitting manually
+
     # perform the testing and training depending on arguments
     print("Beginning...")
-    perform_train_and_test(train, test, regression, classification, skip_display_intermediate, is_graph, folder, input_file, needs_json_parsing, not no_tts, dev)
+    perform_train_and_test(train, test, regression, classification, skip_display_intermediate, is_graph, folder, input_file, needs_json_parsing, not no_tts, dev, train_dir=train_dir, test_dir=test_dir, val_dir=val_dir)
     print("Done")
     
 

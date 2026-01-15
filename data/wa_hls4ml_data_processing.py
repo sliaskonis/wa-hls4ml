@@ -190,7 +190,7 @@ def create_graph_tensor(input_values, input_raw_values, input_json, mean, stdev,
     return graph_datapoint   
 
 
-def preprocess_data(model_folder, is_graph = False, input_folder="../results/results_combined.csv", needs_json_parsing = False, is_already_serialized = False, mean = None, stdev = None, doing_train_test_split = True, dev = "cpu"):
+def preprocess_data(model_folder, is_graph = False, input_folder="../results/results_combined.csv", output_csv="auto_parsed_json.csv", needs_json_parsing = False, is_already_serialized = False, mean = None, stdev = None, doing_train_test_split = True, dev = "cpu"):
     ''' Preprocess the data '''
 
     input_features = ["d_in", "d_out", "prec", "rf", "strategy", "rf_times_precision"]
@@ -202,8 +202,8 @@ def preprocess_data(model_folder, is_graph = False, input_folder="../results/res
     special_feature_names = ["model_string"]
 
     if needs_json_parsing:
-        parse_file(input_folder)
-        input_folder = 'auto_parsed_json.csv'
+        parse_file(input_folder, output_csv=output_csv)
+        input_folder = output_csv
 
     _X, y, X_raw, special_data = preprocess_data_from_csv(model_folder, input_folder, input_features, output_features,
                              binary_feature_names, numeric_feature_names,
