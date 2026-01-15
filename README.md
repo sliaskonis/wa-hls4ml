@@ -43,6 +43,10 @@ Each JSON file contains a list of model synthesis reports. The key fields requir
 -   `resource_report`: `BRAM`, `DSP`, `FF`, `LUT`, `URAM`.
 
 **Directory Layout Example:**
+The dataset for wa-hls4ml can be found/downloaded at [HuggingFace](https://huggingface.co/datasets/fastmachinelearning/wa-hls4ml).
+
+The dataset layout should look like this:
+
 ```text
 dataset/
 ├── train/
@@ -83,9 +87,6 @@ python3 wa_hls4ml.py --train --regression --gnn \
     --test-dir dataset/test \
     -f my_gnn_model
 ```
-
-#### Note on Classification
-If your dataset contains only "successful" synthesis runs, the classifier training will be trivial (loss = 0). You can skip it by omitting the `--classification` flag.
 
 ### Testing
 
