@@ -1,3 +1,11 @@
+## Fork Notice
+
+This repository is a **fork** of the original [`wa-hls4ml`](github.com/Dendendelen/wa-hls4ml).
+
+This fork extends the original work for use in my thesis.
+
+All credit for the original implementation goes to the original authors.
+
 # wa-hls4ml: Surrogate Model for HLS Synthesis
 
 `wa-hls4ml` is a machine learning framework designed to predict the performance metrics (latency and resource usage) of HLS (High-Level Synthesis) designs. It supports both standard Multilayer Perceptrons (MLP) and Graph Neural Networks (GNN) to model the structure of the synthesis tasks.
